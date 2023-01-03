@@ -1,0 +1,619 @@
+---
+title: "Predictive Modeling Project"
+output: html_notebook
+---
+
+```{r}
+library(readr)
+library(tree)
+library(ISLR2)
+library(tidyverse)
+library(dplyr)
+library(scales)
+
+Housing <- read.csv("/Users/RyanLee/Desktop/Summer 2022/Intro to Machine Learning/HousingPrices_edited.csv", header = TRUE)
+attach(Housing)
+clean <- data.frame(latestPrice, latitude, longitude, propertyTaxRate, hasAssociation,age, livingAreaSqFt, lotSizeSqFt, avgSchoolRating,numOfBathrooms,numOfBedrooms)
+#clean_range <- as.data.frame(rescale(select(clean, c(2:11)), to = c(0, 1)))
+x <- clean[,2:11]
+range01 <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+# Scaling latestPrice to log scale
+clean[,1] <- log(clean[,1])
+
+# Scaling remaining variables between 0 and 1
+clean[,2:11] <- apply(clean[,2:11], MARGIN = 2, FUN = range01)
+clean
+```
+```{r}
+# Trees Linear Regression
+library(tree)
+set.seed(1)
+train <- sample(1:nrow(clean), nrow(clean)/2)
+tree.clean <- tree(latestPrice ~ ., data = clean, subset = train, mindev = 0.0005)
+
+summary(tree.clean)
+
+plot(tree.clean)
+text(tree.clean, pretty = 10)
+
+# Using unpruned tree to make predictions on test set
+latestPrice.pred.up <- predict(tree.clean, newdata = clean[-train, ])
+clean.test <- clean[-train, "latestPrice"]
+plot(latestPrice.pred.up, clean.test)
+abline(0,1)
+RMSE_tree.up = sqrt(mean((latestPrice.pred.up - clean.test)^2))
+summary(clean.test)
+print(c("For unpruned tree, the RSME is:",RMSE_tree.up), quote = TRUE)
+
+#Cross-Validation: Finding best tree size
+cv.clean <- cv.tree(tree.clean)
+plot(cv.clean$size, cv.clean$dev, type = "b")
+
+# Choosing best tree size for lowest deviation
+which.min(cv.clean$size)
+
+# Pruning Tree
+prune.clean <- prune.tree(tree.clean, best = 20)
+plot(prune.clean)
+text(prune.clean, pretty = 10)
+
+
+# Using pruned tree to make predictions on test set
+latestPrice.pred.p <- predict(prune.clean, newdata = clean[-train, ])
+clean.test.p <- clean[-train, "latestPrice"]
+plot(latestPrice.pred.p, clean.test.p)
+abline(0,1)
+RMSE_tree.p = sqrt(mean((latestPrice.pred.p - clean.test.p)^2))
+summary(clean.test.p)
+
+print(c("When the tree size is 20, the RSME is:",RMSE_tree.p), quote = TRUE)
+```
+
+```{r}
+# Bagging
+set.seed(1)
+# Random Forests
+train <- sample(1:nrow(clean)[1], nrow(clean)[1] / 2)
+Housing.train <- clean[train,]
+Housing.test <- clean[-train, 'latestPrice']
+
+library(randomForest)
+set.seed(1)
+RMSE_matrix.bag = matrix(data = NA, nrow = 20, ncol = 2)
+
+for (i in 1:20) {
+bag.Housing <- randomForest(latestPrice ~ ., data = clean,
+                             subset = train, mtry = 10, ntree = i*100, importance = TRUE)
+print(bag.Housing)
+
+bag.pred <- predict(bag.Housing, newdata = clean[-train,])
+RMSE.bag = sqrt(mean((bag.pred - Housing.test)^2))
+RMSE_matrix.bag[i,1] = i*100
+RMSE_matrix.bag[i,2] = RMSE.bag
+print(i*100)
+
+#importance(bag.Housing)
+#varImpPlot(bag.Housing)
+}
+plot(RMSE_matrix.bag[,1], RMSE_matrix.bag[,2], main = 'Test RMSE vs Number of Trees', xlab = "Number of Trees", ylab = "Test RMSE" )
+plot(bag.pred, Housing.test)
+abline(0,1)
+print(c("When bagging, the RSME is:",RMSE_bag))
+
+
+```
+```{r}
+# Bagging
+set.seed(1)
+# Random Forests
+train <- sample(1:nrow(clean)[1], nrow(clean)[1] / 2)
+Housing.train <- clean[train,]
+Housing.test <- clean[-train,"latestPrice"]
+
+library(randomForest)
+set.seed(1)
+
+bag.Housing <- randomForest(latestPrice ~ ., data = clean, subset = train, importance = TRUE, mtry = 10, ntree = 900)
+print(bag.Housing)
+
+bag.pred <- predict(bag.Housing, newdata = clean[-train,])
+RMSE.bag = sqrt(mean((bag.pred - Housing.test)^2))
+
+importance(bag.Housing)
+varImpPlot(bag.Housing)
+
+#plot(bag.pred, Housing.test)
+#abline(0,1)
+#rint(c("When bagging, the RSME is:",RMSE.bag))
+```
+
+```{r}
+# Random Forest
+library(randomForest)
+library(ipred)
+
+set.seed(1)
+# Random Forests
+train <- sample(1:nrow(clean)[1], nrow(clean)[1] / 2)
+Housing.train <- clean[train,]
+Housing.test <- clean[-train, "latestPrice"]
+
+RMSE_matrix = matrix(data = NA, nrow = 10, ncol = 2)
+
+for (i in 1:10) {
+rf.Housing <- randomForest(latestPrice ~ ., data = clean,
+                           subset = train, mtry = i, importance = TRUE)
+rf.pred <- predict(rf.Housing, newdata = clean[-train, ])
+#MSE_rf = mean((rf.pred - Housing.test)^2)
+RMSE_rf = sqrt(mean((rf.pred - Housing.test)^2))
+RMSE_matrix[i,1] = i
+RMSE_matrix[i,2] = RMSE_rf
+print(i)
+print(rf.Housing)
+importance(rf.Housing)
+varImpPlot(rf.Housing)
+
+
+}
+RMSE_matrix
+plot(RMSE_matrix[,1],RMSE_matrix[,2], main = 'Test RMSE vs Number of Predictors at Splits', xlab = "Number of Predictors at Each Split", ylab = "Test RMSE")
+
+print(c("When using random forests, the best RSME is:",min(RMSE_matrix[,2])))
+which.min(RMSE_matrix[,2])
+# The lowest RMSE value is obtained when mtry = 4.
+```
+```{r}
+# Random Forest
+library(randomForest)
+library(ipred)
+
+set.seed(1)
+# Random Forests
+train <- sample(1:nrow(clean)[1], nrow(clean)[1] / 2)
+Housing.train <- clean[train,]
+Housing.test <- clean[-train,]
+
+rf.Housing <- randomForest(latestPrice ~ ., data = clean,
+                           subset = train, mtry = 4, importance = TRUE, xtest = subset(Housing.test, select=-latestPrice), ytest = Housing.test$latestPrice)
+print(rf.Housing)
+
+#rf.pred <- predict(rf.Housing, newdata = clean[-train, ])
+#MSE_rf = mean((rf.pred - Housing.test)^2)
+#RMSE_rf = sqrt(mean((rf.pred - Housing.test)^2))
+
+importance(rf.Housing)
+varImpPlot(rf.Housing)
+
+```
+
+
+```{r}
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost = matrix(data = NA, nrow = 20, ncol = 2)
+
+for (i in 1:20) {
+# Choosing number of trees (50 - 1000) while holding interaction depth 14
+boost.Housing <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = i*50, interaction.depth = 21, verbose = F)
+
+boost.pred <- predict(boost.Housing,
+                      newdata = clean[-train, ], n.trees = i*50,interaction.depth = 21)
+RMSE_boost <- sqrt(mean((boost.pred - Housing.test)^2))
+RMSE_matrix_boost[i,1] = i*50
+RMSE_matrix_boost[i,2] = RMSE_boost
+print(i*50)
+print(boost.Housing)
+}
+RMSE_matrix_boost
+plot(RMSE_matrix_boost[,1],RMSE_matrix_boost[,2], main = 'Test RMSE vs Number of Trees', xlab = "Number of Trees", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost[,2])
+```
+```{r}
+# Boosting
+library(gbm)
+set.seed(1)
+RMSE_matrix_boost.200 = matrix(data = NA, nrow = 20, ncol = 2)
+
+for (i in 1:20) {
+# Choosing number of trees while holding interaction depth and shrinkage at 14 and 0.1, respectively
+boost.Housing.200 <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = i*10, interaction.depth = 21, verbose = F)
+
+boost.pred.200 <- predict(boost.Housing.200,
+                      newdata = clean[-train, ], n.trees = i*10,interaction.depth = 21)
+RMSE_boost.200 <- sqrt(mean((boost.pred.200 - Housing.test)^2))
+RMSE_matrix_boost.200[i,1] = i*10
+RMSE_matrix_boost.200[i,2] = RMSE_boost.200
+
+print(i*10)
+}
+RMSE_matrix_boost.200
+plot(RMSE_matrix_boost.200[,1],RMSE_matrix_boost.200[,2], main = 'Test RMSE vs Number of Trees', xlab = "Number of Trees", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.200[,2])
+```
+```{r}
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost.shrink = matrix(data = NA, nrow = 20, ncol = 2)
+
+for (m in 1:20) {
+# Choosing shrinkage while holding interaction depth at 21 and number of trees at 80, respectively
+boost.Housing.shrink <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 80, interaction.depth = 21, shrinkage = m*0.01, verbose = F)
+
+boost.pred <- predict(boost.Housing.shrink,
+                      newdata = clean[-train, ], n.trees = 80, interaction.depth = 21)
+RMSE_boost.shrink <- sqrt(mean((boost.pred - Housing.test)^2))
+RMSE_matrix_boost.shrink[m,1] = m*0.01
+RMSE_matrix_boost.shrink[m,2] = RMSE_boost.shrink
+
+print(m*0.01)
+}
+RMSE_matrix_boost.shrink
+plot(RMSE_matrix_boost.shrink[,1],RMSE_matrix_boost.shrink[,2], main = 'Test RMSE vs Shrinkage Factor', xlab = "Shrinkage Factor", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.shrink[,2])
+```
+```{r}
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost.dep = matrix(data = NA, nrow = 30, ncol = 2)
+
+for (v in 1:30) {
+# Choosing interaction depth while holding shrinkage at 0.11 and number of trees at 80, respectively
+boost.Housing.dep <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 80, interaction.depth = v, shrinkage = 0.11, verbose = F)
+
+boost.pred.dep <- predict(boost.Housing.dep,
+                      newdata = clean[-train, ], n.trees = 80, interaction.depth = v)
+RMSE_boost.dep <- sqrt(mean((boost.pred.dep - Housing.test)^2))
+RMSE_matrix_boost.dep[v,1] = v
+RMSE_matrix_boost.dep[v,2] = RMSE_boost.dep
+
+print(v*1)
+}
+RMSE_matrix_boost.dep
+plot(RMSE_matrix_boost.dep[,1],RMSE_matrix_boost.dep[,2], main = 'Test RMSE vs Interaction Depth', xlab = "Interaction Depth", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.dep[,2])
+```
+```{r}
+# Boosting
+library(gbm)
+train <- sample(1:nrow(clean)[1], nrow(clean)[1] / 2)
+Housing.train <- clean[train,]
+Housing.test <- clean[-train,'latestPrice']
+
+set.seed(1)
+# Tuned Boosting Model
+boost.Housing.tune <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 375, interaction.depth = 10, shrinkage = 0.06, verbose = F)
+
+boost.pred.tune <- predict(boost.Housing.tune,
+                      newdata = clean[-train, ], n.trees = 375, interaction.depth = 10, shrinkage = 0.06, verbose = F)
+RMSE_boost.tune <- sqrt(mean((boost.pred.tune - Housing.test)^2))
+RMSE_boost.tune
+
+summary(boost.Housing.tune)
+plot(boost.pred.tune, Housing.test)
+plot(boost.Housing.tune, i= "latitude", col = 'red')
+plot(boost.Housing.tune, i= "longitude", col = 'blue')
+
+```
+```{r}
+# Boosting
+library(gbm)
+set.seed(1)
+# Tuned Boosting Model
+boost.Housing.tune <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 75, interaction.depth = 21, shrinkage = 0.1,verbose = F)
+
+boost.pred.tune <- predict(boost.Housing.tune,
+                      newdata = clean[-train, ], n.trees = 75, interaction.depth = 21, shrinkage = 0.1, verbose = F)
+RMSE_boost.tune <- sqrt(mean((boost.pred.tune - Housing.test)^2))
+RMSE_boost.tune
+
+summary(boost.Housing.tune)
+plot(boost.pred.tune, Housing.test)
+
+plot(boost.Housing.tune, "livingAreaSqFt", pch ="o", type = "l", col = "red")
+plot(boost.Housing.tune, i = "latitude", type = "l", col = "blue")
+plot(boost.Housing.tune, i = "numOfBathrooms", type = "l", col = "green")
+plot(boost.Housing.tune, i = "longitude", type = "l", col = "yellow")
+plot(boost.Housing.tune, i = "age", type = "l", col = "purple")
+```
+
+
+```{r}
+# Boosting, changing number of trees with int depth = 6, n.trees:100-2000
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost.6 = matrix(data = NA, nrow = 32, ncol = 2)
+
+for (i in 1:32) {
+# Choosing number of trees (50 - 1000) while holding interaction depth 14
+boost.Housing.6 <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = i*25, interaction.depth = 6, verbose = F)
+
+boost.pred.6 <- predict(boost.Housing.6,
+                      newdata = clean[-train, ], n.trees = i*25,interaction.depth = 6)
+RMSE_boost.6 <- sqrt(mean((boost.pred.6 - Housing.test)^2))
+RMSE_matrix_boost.6[i,1] = i*25
+RMSE_matrix_boost.6[i,2] = RMSE_boost.6
+print(i*25)
+}
+RMSE_matrix_boost.6
+plot(RMSE_matrix_boost.6[,1],RMSE_matrix_boost.6[,2], main = 'Test RMSE vs Number of Trees', xlab = "Number of Trees", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.6[,2])
+```
+```{r}
+# Boosting, changing int depth with n.trees = 325
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost.intdepth = matrix(data = NA, nrow = 24, ncol = 2)
+
+for (i in 2:24) {
+# Choosing number of trees (50 - 1000) while holding interaction depth 14
+boost.Housing.intdepth <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 325, interaction.depth = i, verbose = F)
+
+boost.pred.intdepth <- predict(boost.Housing.intdepth,
+                      newdata = clean[-train, ], n.trees = 325,interaction.depth = i)
+RMSE_boost.intdepth <- sqrt(mean((boost.pred.intdepth - Housing.test)^2))
+RMSE_matrix_boost.intdepth[i,1] = i
+RMSE_matrix_boost.intdepth[i,2] = RMSE_boost.intdepth
+print(i)
+}
+RMSE_matrix_boost.intdepth
+plot(RMSE_matrix_boost.intdepth[,1],RMSE_matrix_boost.intdepth[,2], main = 'Test RMSE vs Interaction Depth', xlab = "Interaction Depth", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.intdepth[,2])
+```
+
+```{r}
+# Boosting, changing shrinkage with int depth = 10, n.trees = 325
+# Boosting
+library(gbm)
+set.seed(1)
+
+RMSE_matrix_boost.sh = matrix(data = NA, nrow = 30, ncol = 2)
+
+for (i in 1:30) {
+# Choosing number of trees (50 - 1000) while holding interaction depth 14
+boost.Housing.sh <- gbm(latestPrice ~ ., data = clean[train, ],
+                     distribution = "gaussian", n.trees = 325, interaction.depth = 10, shrinkage = i*0.01, verbose = F)
+
+boost.pred.sh <- predict(boost.Housing.sh,
+                         newdata = clean[-train, ], n.trees = 325, interaction.depth = 10, shrinkage = i*0.01, verbose = F)
+RMSE_boost.sh <- sqrt(mean((boost.pred.sh - Housing.test)^2))
+RMSE_matrix_boost.sh[i,1] = i*0.01
+RMSE_matrix_boost.sh[i,2] = RMSE_boost.sh
+print(i*0.01)
+}
+RMSE_matrix_boost.sh
+plot(RMSE_matrix_boost.sh[,1],RMSE_matrix_boost.sh[,2], main = 'Test RMSE vs Shrinkage Factor', xlab = "Shrinkage Factor", ylab = "Test RMSE")
+which.min(RMSE_matrix_boost.sh[,2])
+```
+
+
+
+```{r}
+library(BART)
+x <- clean[, 2:11]
+y <- clean[, "latestPrice"]
+
+xtrain <- x[train, ]
+ytrain <- y[train]
+
+xtest <- x[-train, ]
+ytest <- y[-train]
+set.seed(1)
+bartfit <- gbart(xtrain, ytrain, x.test = xtest)
+
+yhat.bart <- bartfit$yhat.test.mean
+RMSE_BART = sqrt(mean((ytest - yhat.bart)^2))
+RMSE_BART
+# Check how many times each variable appeared in the
+# collection of trees
+
+ord <- order(bartfit$varcount.mean, decreasing = T)
+bartfit$varcount.mean[ord]
+```
+
+
+```{r}
+
+train <- sample(c(TRUE,FALSE), nrow(clean),
+                replace = TRUE)
+test <- (!train)
+regfit.best <- regsubsets(latestPrice ~ .,
+                          data = clean[train, ], nvmax = 10)
+
+# Model Matrix
+test.mat <- model.matrix(latestPrice ~., data = clean[test, ])
+val.errors <- rep(NA, 10)
+for (i in 1:10) {
+  coefi <- coef(regfit.best, id = i)
+  pred <- test.mat[, names(coefi)] %*% coefi
+  val.errors[i] <- mean((clean$latestPrice[test] - pred)^2)
+}
+val.errors
+
+which.min(val.errors)
+coef(regfit.best, 7)
+
+# There is no predict() method for regsubsets()
+# Code below is the same as the for loop above
+predict.regsubsets <- function(object, newdata, id,...) {
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+}
+
+regfit.best <- regsubsets(latestPrice ~., data = clean,
+                          nvmax= 10)
+coef(regfit.best, 7)
+
+```
+
+```{r}
+k <- 9
+n <- nrow(clean)
+
+folds <- sample(rep(1:k, length = n))
+cv.errors <- matrix(NA, k, 10,
+                    dimnames = list(NULL, paste(1:10)))
+# Now, we write a loop that performs cross validation
+for (j in 1:k) {
+  best.fit <- regsubsets(latestPrice ~.,
+                         data = clean[folds !=j, ],
+                         nvmax = 10)
+  for (i in 1:10) {
+    pred <- predict(best.fit, clean[folds == j, ], id = i)
+    cv.errors[j, i] <-
+      mean((clean$latestPrice[folds == j] - pred)^2)
+  }
+}
+
+# We use the apply() function to avg over the columns of this matrix
+mean.cv.errors <- apply(cv.errors, 2, mean)
+mean.cv.errors
+par(mfrow = c(1,1))
+plot(mean.cv.errors, type = "b")
+```
+
+```{r}
+# Ridge Regression
+
+x <- model.matrix(latestPrice ~ ., clean)[, -1]
+y <- clean$latestPrice
+
+library(glmnet)
+grid <- 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, alpha =0, lambda = grid)
+dim(coef(ridge.mod))
+
+ridge.mod$lambda[40]
+coef(ridge.mod)[, 40]
+sqrt(sum(coef(ridge.mod)[-1, 40]^2))
+
+ridge.mod$lambda[5]
+coef(ridge.mod)[, 5]
+sqrt(sum(coef(ridge.mod)[-1, 5]^2))
+
+predict(ridge.mod, a = 50, type = "coefficients")[1:11, ]
+
+# Splitting samples into train and test sets
+set.seed(1)
+train <- sample(1:nrow(x), nrow(x)/2)
+test <- (-train)
+y.test <- y[test]
+
+ridge.mod <- glmnet(x[train, ], y[train], alpha = 0,
+                    lambda = grid, thresh =  1e-12)
+ridge.pred <- predict(ridge.mod, s= 4, newx = x[test, ])
+mean((ridge.pred - y.test)^2)
+
+# If we had simply fit a model w/ just an intercept, we would predict each test
+# observation using the mean of the training observations like below:
+mean((mean(y[train]) - y.test)^2)
+
+# We get the same result fitting a ridge regression model with a large lamda
+ridge.pred <- predict(ridge.mod, s = 1e10, newx = x[test, ])
+mean((ridge.pred - y.test)^2)
+
+# Checking if there is any benefit with performing ridge regression instead of just doing least squares regression
+ridge.pred <- predict(ridge.mod, s = 0, newx = x[test, ],
+                      exact = T, x = x[train, ], y = y[train])
+mean((ridge.pred - y.test)^2)
+predict(ridge.mod, s = 0, exact = T, type = 'coefficients',
+        x = x[train, ], y = y[train])[1:11, ]
+
+# Using cross validation to choose the tuning parameter lambda
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train], alpha = 0)
+plot(cv.out)
+bestlam <- cv.out$lambda.min
+bestlam
+
+ridge.pred <- predict(ridge.mod, s = bestlam,
+                      newx = x[test, ])
+mean((ridge.pred - y.test)^2)
+
+out <- glmnet(x, y, alpha = 0)
+predict(out, type = "coefficients", s = bestlam)[1:11, ]
+```
+
+```{r}
+library(glmnet)
+lasso.mod <- glmnet(x[train, ], y[train], alpha = 1,
+                    lambda = grid)
+plot(lasso.mod)
+
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train, alpha = 1, lambda = grid])
+plot(lasso.mod)
+
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train], alpha = 1)
+plot(cv.out)
+bestlam <- cv.out$lambda.min
+lasso.pred <- predict(lasso.mod, s = bestlam,
+                      newx = x[test, ])
+mean((lasso.pred - y.test)^2)
+
+out <- glmnet(x, y, alpha = 1, lambda = grid)
+lasso.coef <- predict(out, type = "coefficients",
+                      s = bestlam)[1:11, ]
+lasso.coef
+lasso.coef[lasso.coef != 0]
+```
+```{r}
+library(pls)
+
+pcr.fit <- pcr(latestPrice ~ ., data = clean, scale = TRUE,
+               validation = "CV")
+summary(pcr.fit)
+
+validationplot(pcr.fit, val.type = "MSEP")
+
+# Performing PCR on the training data and evaluate its test set
+cr.fit <- pcr(latestPrice ~ ., data =  clean, subset = train,
+              scale = TRUE, validation = "CV")
+pcr.pred <- predict(pcr.fit, x[test, ], ncomp = 10)
+mean((pcr.pred - y.test)^2)
+
+# Using number of components identified by cross-validation
+pcr.fit <- pcr(y ~ x, scale = TRUE, ncomp = 10)
+summary(pcr.fit)
+
+```
+```{r}
+
+pls.fit <- plsr(latestPrice ~ ., data = clean, subset = train,
+                scale = TRUE, validation = "CV")
+summary(pls.fit)
+
+validationplot(pls.fit, val.type = "MSEP")
+
+pls.pred <- predict(pls.fit, x[test, ], ncomp = 10)
+mean((pls.pred - y.test)^2)
+
+pls.fit <- plsr(latestPrice ~ ., data = clean, scale = TRUE,
+                ncomp = 10)
+summary(pls.fit)
+
+```
